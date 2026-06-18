@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: train-tracker-backend
+    restart: unless-stopped
+    environment:
+      - RTT_API_TOKEN=${RTT_API_TOKEN}
+      # Override if the NG portal gives you a different base URL:
+      # - RTT_API_BASE=https://api.rtt.io/api/v1
+    volumes:
+      - train-tracker-data:/data
+    ports:
+      - "47201:8889"   # exposed for debug — visit /api/debug to diagnose auth
+    networks:
+      - train-tracker
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+    container_name: train-tracker-frontend
+    restart: unless-stopped
+    ports:
+      - "47200:80"
+    depends_on:
+      - backend
+    networks:
+      - train-tracker
+
+volumes:
+  train-tracker-data:
+    name: train-tracker-data
+
+networks:
+  train-tracker:
+    name: train-tracker
