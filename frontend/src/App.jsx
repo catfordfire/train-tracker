@@ -13,16 +13,18 @@ L.Icon.Default.mergeOptions({
 const API_BASE = (typeof __API_URL__ !== 'undefined' && __API_URL__) ? __API_URL__ : '';
 const REFRESH_INTERVAL = 30_000;
 
+const STADIA_KEY = (typeof __STADIA_API_KEY__ !== 'undefined' && __STADIA_API_KEY__) ? __STADIA_API_KEY__ : '';
+
 const MAP_TILES = {
   dark: {
     label: '🌑 Dark',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    url: `https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png${STADIA_KEY ? '?api_key=' + STADIA_KEY : ''}`,
+    attribution: '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   },
   light: {
     label: '☀️ Light',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    url: `https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png${STADIA_KEY ? '?api_key=' + STADIA_KEY : ''}`,
+    attribution: '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   },
   satellite: {
     label: '🛰️ Satellite',
@@ -74,34 +76,44 @@ function stopColour(loc) {
   const pass = loc.temporalData?.pass;
   const displayAs = loc.temporalData?.displayAs;
 
-  // Cancelled
   if (arr?.isCancelled || dep?.isCancelled) return '#ef4444';
+  if (displayAs === 'CANCELLED_CALL' || displayAs === 'CANCELLED_PASS') return '#ef4444';
 
-  // Detailed mode: use live signal status
+  // Detailed mode: live signal status
   const st = locationStatus(loc);
   if (st?.pulse) return st.colour;
 
-  // Departed/passed — has actual time recorded
+  // Departed/passed
   if (dep?.realtimeActual || arr?.realtimeActual || pass?.realtimeActual) return '#22c55e';
 
-  // displayAs hints even without detailed mode
-  if (displayAs === 'CANCELLED_CALL' || displayAs === 'CANCELLED_PASS') return '#ef4444';
-
-  // Late: has realtime but no actual yet, and is late
+  // Late via advertised lateness
   const delay = dep?.realtimeAdvertisedLateness ?? arr?.realtimeAdvertisedLateness;
   if (delay !== null && delay !== undefined) {
-    if (delay > 3) return '#f59e0b';   // late
-    if (delay <= 0) return '#22c55e';  // on time / early — departed
+    if (delay > 3) return '#f59e0b';
+    if (delay <= 0) return '#22c55e';
+  }
+
+  // Forecast available (detailed mode) — compare forecast to schedule
+  const forecast = dep?.realtimeForecast || arr?.realtimeForecast || pass?.realtimeForecast;
+  const sched = dep?.scheduleAdvertised || arr?.scheduleAdvertised || pass?.scheduleAdvertised;
+  if (forecast && sched) {
+    const lateMs = new Date(forecast) - new Date(sched);
+    const lateMins = lateMs / 60000;
+    if (lateMins > 3) return '#f59e0b';
+    if (lateMins <= 0) return '#34d399'; // forecast on time/early — light green
+    return '#fbbf24'; // slightly late forecast
   }
 
   // Due: scheduled time has passed
-  const sched = dep?.scheduleAdvertised || arr?.scheduleAdvertised || pass?.scheduleAdvertised;
   if (sched && new Date(sched) <= new Date()) return '#f59e0b';
 
-  return '#94a3b8'; // upcoming
+  return '#94a3b8';
 }
 
 function isPass(loc) {
+  const displayAs = loc.temporalData?.displayAs;
+  if (displayAs) return displayAs === 'PASS' || displayAs === 'CANCELLED_PASS';
+  // Fallback: no arrival or departure timing, only pass
   return !loc.temporalData?.arrival && !loc.temporalData?.departure && !!loc.temporalData?.pass;
 }
 
@@ -115,29 +127,107 @@ function journeyProgress(locations) {
 }
 
 function estimatePosition(locations) {
-  const withCoords = locations.filter(l => l.lat && l.lon);
-  if (!withCoords.length) return null;
-  for (const loc of withCoords) {
-    const st = locationStatus(loc);
-    if (st?.pulse) return { lat: loc.lat, lon: loc.lon, label: `${st.label}: ${loc.location?.description}` };
+  // Filter to only locations with valid numeric coordinates
+  const valid = locations.filter(l =>
+    typeof l.lat === 'number' && typeof l.lon === 'number' &&
+    isFinite(l.lat) && isFinite(l.lon)
+  );
+  if (!valid.length) return null;
+
+  // ── Priority 1: Signal status (detailed mode) ─────────────────────────────
+  for (let i = 0; i < valid.length; i++) {
+    const loc = valid[i];
+    const status = loc.temporalData?.status;
+    if (!status) continue;
+    const prev = i > 0 ? valid[i - 1] : null;
+
+    if (status === 'APPROACHING' || status === 'APPR_STAT') {
+      if (prev) return {
+        lat: prev.lat + (loc.lat - prev.lat) * 0.75,
+        lon: prev.lon + (loc.lon - prev.lon) * 0.75,
+        label: `Approaching ${loc.location?.description}`,
+      };
+      return { lat: loc.lat, lon: loc.lon, label: `Approaching ${loc.location?.description}` };
+    }
+    if (status === 'APPR_PLAT') {
+      if (prev) return {
+        lat: prev.lat + (loc.lat - prev.lat) * 0.95,
+        lon: prev.lon + (loc.lon - prev.lon) * 0.95,
+        label: `Arriving at ${loc.location?.description}`,
+      };
+      return { lat: loc.lat, lon: loc.lon, label: `Arriving at ${loc.location?.description}` };
+    }
+    if (status === 'AT_PLAT' || status === 'AT_PLATFORM') {
+      return { lat: loc.lat, lon: loc.lon, label: `At ${loc.location?.description}` };
+    }
+    if (status === 'DEP_PREP' || status === 'DEP_READY') {
+      return { lat: loc.lat, lon: loc.lon, label: `Departing ${loc.location?.description}` };
+    }
   }
+
+  // ── Priority 2: Time-based interpolation ──────────────────────────────────
   let lastDep = null, nextArr = null;
-  for (const loc of withCoords) {
-    const acted = loc.temporalData?.departure?.realtimeActual || loc.temporalData?.arrival?.realtimeActual || loc.temporalData?.pass?.realtimeActual;
-    if (acted) lastDep = loc;
-    else if (!nextArr && lastDep) nextArr = loc;
+  for (const loc of valid) {
+    const td = loc.temporalData;
+    const acted = td?.departure?.realtimeActual
+               || td?.pass?.realtimeActual
+               || td?.arrival?.realtimeActual;
+    if (acted) {
+      lastDep = loc;
+    } else if (!nextArr && lastDep) {
+      nextArr = loc;
+    }
   }
-  if (!lastDep) return { lat: withCoords[0].lat, lon: withCoords[0].lon, label: 'At origin' };
+
+  if (!lastDep) return { lat: valid[0].lat, lon: valid[0].lon, label: 'At origin' };
   if (!nextArr) return { lat: lastDep.lat, lon: lastDep.lon, label: 'At terminus' };
-  const depTime = new Date(lastDep.temporalData?.departure?.scheduleAdvertised || lastDep.temporalData?.pass?.scheduleAdvertised);
-  const arrTime = new Date(nextArr.temporalData?.arrival?.scheduleAdvertised || nextArr.temporalData?.pass?.scheduleAdvertised);
-  if (arrTime <= depTime) return { lat: lastDep.lat, lon: lastDep.lon, label: `Left ${lastDep.location?.description}` };
+
+  const ltd = lastDep.temporalData;
+  const ntd = nextArr.temporalData;
+
+  const depStr = ltd?.departure?.realtimeActual
+    || ltd?.pass?.realtimeActual
+    || ltd?.departure?.realtimeForecast
+    || ltd?.departure?.scheduleInternal
+    || ltd?.pass?.realtimeForecast
+    || ltd?.pass?.scheduleInternal;
+
+  const arrStr = ntd?.arrival?.realtimeForecast
+    || ntd?.arrival?.scheduleInternal
+    || ntd?.pass?.realtimeForecast
+    || ntd?.pass?.scheduleInternal
+    || ntd?.arrival?.scheduleAdvertised
+    || ntd?.pass?.scheduleAdvertised;
+
+  if (!depStr || !arrStr) {
+    return { lat: lastDep.lat, lon: lastDep.lon, label: `Left ${lastDep.location?.description}` };
+  }
+
+  const depTime = new Date(depStr);
+  const arrTime = new Date(arrStr);
+
+  if (isNaN(depTime.getTime()) || isNaN(arrTime.getTime()) || arrTime <= depTime) {
+    return { lat: lastDep.lat, lon: lastDep.lon, label: `Left ${lastDep.location?.description}` };
+  }
+
   const frac = Math.min(1, Math.max(0, (Date.now() - depTime) / (arrTime - depTime)));
+  const lat = lastDep.lat + (nextArr.lat - lastDep.lat) * frac;
+  const lon = lastDep.lon + (nextArr.lon - lastDep.lon) * frac;
+
+  if (isNaN(lat) || isNaN(lon)) return null;
+
   return {
-    lat: lastDep.lat + (nextArr.lat - lastDep.lat) * frac,
-    lon: lastDep.lon + (nextArr.lon - lastDep.lon) * frac,
+    lat, lon,
     label: `Between ${lastDep.location?.description} → ${nextArr.location?.description}`,
   };
+}
+
+
+function safePosition(pos) {
+  if (!pos) return null;
+  if (isNaN(pos.lat) || isNaN(pos.lon)) return null;
+  if (!isFinite(pos.lat) || !isFinite(pos.lon)) return null;
+  return pos;
 }
 
 const trainIcon = (colour = '#60a5fa') => L.divIcon({
@@ -525,7 +615,215 @@ function HeadcodeSearch({ onSelectService }) {
 
 // ─── Stop list ────────────────────────────────────────────────────────────────
 
-function StopList({ locations, activeStop, onSelect }) {
+
+// ─── Connections Panel ────────────────────────────────────────────────────────
+
+function ConnectionsPanel({ stop, arrivalISO, destCode, destName, onSelectService, onClose, leg }) {
+  const [services, setServices] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [expandedIdx, setExpandedIdx] = useState(null);
+  const [nextLeg, setNextLeg] = useState(null);
+
+  const crs = stop.location?.shortCodes?.[0];
+  const stationName = stop.location?.description;
+
+  // If we're AT the destination, clear the filter — show all onward connections
+  const isAtDest = destCode && crs === destCode;
+  const effectiveDestCode = isAtDest ? null : destCode;
+  const effectiveDestName = isAtDest ? null : destName;
+
+  useEffect(() => {
+    if (!crs) { setError('No CRS code for this stop'); setLoading(false); return; }
+
+    const fromTime = arrivalISO ? new Date(arrivalISO) : new Date();
+    const date = fromTime.toISOString().slice(0, 10);
+    const time = `${String(fromTime.getHours()).padStart(2,'0')}${String(fromTime.getMinutes()).padStart(2,'0')}`;
+
+    let url = `${API_BASE}/api/station/${crs}?run_date=${date}&time=${time}&window=120`;
+    if (effectiveDestCode) url += `&filter_to=${effectiveDestCode}`;
+
+    fetch(url)
+      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
+      .then(d => {
+          const svcs = d.services || [];
+          // Filter out services terminating AT this station
+          // API returns longCodes (TIPLOCs) not shortCodes in destination
+          const filtered = svcs.filter(svc => {
+            const destDesc = svc.destination?.[0]?.location?.description || '';
+            const destShort = svc.destination?.[0]?.location?.shortCodes?.[0];
+            // Filter if destination CRS matches (when available)
+            if (destShort && destShort === crs) return false;
+            // Filter if destination description matches station name
+            if (destDesc === stop.location?.description) return false;
+            return true;
+          });
+          setServices(filtered);
+        })
+      .catch(e => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [crs, arrivalISO, destCode]);
+
+  if (nextLeg) {
+    return (
+      <ConnectionsPanel
+        stop={nextLeg.stop}
+        arrivalISO={nextLeg.arrivalISO}
+        destCode={effectiveDestCode}
+        destName={effectiveDestName}
+        onSelectService={onSelectService}
+        onClose={onClose}
+        leg={leg + 1}
+      />
+    );
+  }
+
+  return (
+    <div className="connections-panel">
+      <div className="conn-header">
+        <div className="conn-title">
+          <span className="conn-leg">Leg {leg}</span>
+          <span className="conn-station">Connections at {stationName}</span>
+          {effectiveDestName && <span className="conn-dest">→ {effectiveDestName}</span>}
+          {isAtDest && <span className="conn-dest" style={{color:'#94a3b8'}}>All onward services</span>}
+        </div>
+        <button className="cp-close" onClick={onClose}>✕</button>
+      </div>
+
+      {loading && <div className="conn-loading">Loading connections…</div>}
+      {error && <div className="conn-error">⚠ {error}</div>}
+      {services && services.length === 0 && (
+        <div className="conn-empty">No connections found{effectiveDestName ? ` towards ${effectiveDestName}` : ''}</div>
+      )}
+
+      {services && services.map((svc, i) => {
+        const meta = svc.scheduleMetadata;
+        const dep = svc.temporalData?.departure;
+        const arr = svc.temporalData?.arrival;
+        // Use departure if available, fall back to arrival (pass/arrival-only stops)
+        const td = dep?.scheduleAdvertised ? dep : arr;
+        const delay = td?.realtimeAdvertisedLateness;
+        const cancelled = td?.isCancelled;
+        const hasRt = td?.realtimeActual || td?.realtimeEstimate;
+        const platform = svc.locationMetadata?.platform?.actual || svc.locationMetadata?.platform?.planned;
+        const destLoc = svc.destination?.[0]?.location?.description || '?';
+        const uid = meta?.identity;
+        const depDate = meta?.departureDate;
+        const isExpanded = expandedIdx === i;
+
+        return (
+          <div key={i} className={`conn-service ${cancelled ? 'cancelled' : ''}`}>
+            <div className="conn-service-main" onClick={() => setExpandedIdx(isExpanded ? null : i)}>
+              <div className="sr-time">
+                <span className="sr-sched">{fmtISO(td?.scheduleAdvertised)}</span>
+                {hasRt && (
+                  <span className={`sr-rt ${delay > 0 ? 'late' : delay < 0 ? 'early' : 'ontime'}`}>
+                    {fmtISO(td.realtimeActual || td.realtimeEstimate)}
+                    {delay !== null && delay !== 0 && <span className="delay-badge">{delay > 0 ? `+${delay}` : delay}</span>}
+                  </span>
+                )}
+              </div>
+              <div className="sr-info">
+                <span className="sr-dest">→ {destLoc}</span>
+                <span className="sr-op">{meta?.operator?.name} · {meta?.trainReportingIdentity}</span>
+              </div>
+              <div className="sr-right">
+                {platform && <span className="platform">Pl {platform}</span>}
+                {cancelled
+                  ? <span className="cancelled-badge">CANC</span>
+                  : delay !== null && delay !== undefined
+                    ? delay > 0
+                      ? <span className="conn-delay-badge late">+{delay}m late</span>
+                      : delay < 0
+                        ? <span className="conn-delay-badge early">{Math.abs(delay)}m early</span>
+                        : <span className="conn-delay-badge ontime">On time</span>
+                    : hasRt
+                      ? <span className="conn-delay-badge ontime">On time</span>
+                      : <span className="conn-delay-badge sched">Sched</span>}
+                <span className="expand-arrow">{isExpanded ? '▲' : '▼'}</span>
+              </div>
+            </div>
+
+            {isExpanded && (
+              <ConnServiceDetail
+                uid={uid}
+                depDate={depDate}
+                destCode={effectiveDestCode}
+                destName={effectiveDestName}
+                leg={leg}
+                onTrack={() => { onSelectService(uid, depDate); onClose(); }}
+                onNextLeg={(stop, arrivalISO) => setNextLeg({ stop, arrivalISO })}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ConnServiceDetail({ uid, depDate, destCode, destName, leg, onTrack, onNextLeg }) {
+  const [stops, setStops] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/service/${uid}?run_date=${depDate}`)
+      .then(r => r.json())
+      .then(d => setStops(d?.service?.locations || []))
+      .catch(() => setStops([]))
+      .finally(() => setLoading(false));
+  }, [uid, depDate]);
+
+  if (loading) return <div className="cp-loading">Loading calling points…</div>;
+
+  const publicStops = (stops || []).filter(l => !isPass(l));
+
+  return (
+    <div className="conn-detail">
+      <div className="conn-detail-stops">
+        {publicStops.map((loc, i) => {
+          const dep = loc.temporalData?.departure;
+          const arr = loc.temporalData?.arrival;
+          const sched = fmtISO(dep?.scheduleAdvertised || arr?.scheduleAdvertised);
+          const rt = fmtISO(dep?.realtimeActual || dep?.realtimeEstimate || arr?.realtimeActual || arr?.realtimeEstimate);
+          const delay = dep?.realtimeAdvertisedLateness ?? arr?.realtimeAdvertisedLateness ?? null;
+          const platform = loc.locationMetadata?.platform?.actual || loc.locationMetadata?.platform?.planned;
+          const crs = loc.location?.shortCodes?.[0];
+          const arrISO = arr?.realtimeActual || arr?.realtimeEstimate || arr?.scheduleAdvertised;
+          const isDestination = crs && destCode && crs === destCode;
+
+          return (
+            <div key={i} className={`cp-stop ${isDestination ? 'cp-destination' : ''}`}>
+              <div className="cp-dot" style={{ background: stopColour(loc) }} />
+              <div className="cp-name">
+                {loc.location?.description}
+                {isDestination && <span className="conn-dest-badge">Your destination</span>}
+              </div>
+              <div className="cp-times">
+                <span className="cp-sched">{sched}</span>
+                {rt && rt !== sched && (
+                  <span className={`cp-rt ${delay > 0 ? 'late' : delay < 0 ? 'early' : 'ontime'}`}>
+                    {rt}{delay !== null && delay !== 0 && ` (${delay > 0 ? '+' : ''}${delay})`}
+                  </span>
+                )}
+                {platform && <span className="cp-plat">Pl {platform}</span>}
+                {/* Show "connect here" button for intermediate stops if under leg limit */}
+                {leg < 3 && crs && arrISO && !isDestination && i > 0 && (
+                  <button className="btn-connect" onClick={() => onNextLeg(loc, arrISO)}>
+                    🔗 Connect
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button className="btn-primary cp-track" onClick={onTrack}>Track on map →</button>
+    </div>
+  );
+}
+
+function StopList({ locations, activeStop, onSelect, onConnect, activeConn }) {
   const listRef = useRef(null);
   useEffect(() => {
     if (activeStop != null && listRef.current) {
@@ -539,16 +837,31 @@ function StopList({ locations, activeStop, onSelect }) {
         if (isPass(loc)) return null;
         const colour = stopColour(loc);
         const isActive = activeStop === i;
+        const isConnActive = activeConn === i;
         const td = loc.temporalData;
         const dep = td?.departure; const arr = td?.arrival;
         const schedTime = dep?.scheduleAdvertised || arr?.scheduleAdvertised;
-        const rtTime = dep?.realtimeActual || dep?.realtimeEstimate || arr?.realtimeActual || arr?.realtimeEstimate;
-        const delay = delayMins(td, dep ? 'departure' : 'arrival');
+        const rtTime = dep?.realtimeActual || dep?.realtimeEstimate || arr?.realtimeActual || arr?.realtimeEstimate
+                    || dep?.realtimeForecast || arr?.realtimeForecast;
+        const isForecast = !dep?.realtimeActual && !arr?.realtimeActual && (dep?.realtimeForecast || arr?.realtimeForecast);
+        const delay = delayMins(td, dep ? 'departure' : 'arrival') ??
+          (() => {
+            const fc = dep?.realtimeForecast || arr?.realtimeForecast;
+            const sc = dep?.scheduleAdvertised || arr?.scheduleAdvertised;
+            if (fc && sc) return Math.round((new Date(fc) - new Date(sc)) / 60000);
+            return null;
+          })();
         const platform = loc.locationMetadata?.platform?.actual || loc.locationMetadata?.platform?.planned;
         const st = locationStatus(loc);
+        // Show connect button on upcoming stops (no actual time yet)
+        const isUpcoming = !dep?.realtimeActual && !arr?.realtimeActual;
+        const crs = loc.location?.shortCodes?.[0];
+        // Arrival time for connection timing
+        const arrISO = arr?.realtimeActual || arr?.realtimeEstimate || arr?.scheduleAdvertised
+                    || dep?.realtimeActual || dep?.realtimeEstimate || dep?.scheduleAdvertised;
         return (
           <div key={i} data-idx={i}
-            className={`stop-row ${isActive ? 'active' : ''} ${loc.lat ? '' : 'no-coords'} ${st?.pulse ? 'stop-active' : ''}`}
+            className={`stop-row ${isActive ? 'active' : ''} ${loc.lat ? '' : 'no-coords'} ${st?.pulse ? 'stop-active' : ''} ${isConnActive ? 'conn-active' : ''}`}
             onClick={() => onSelect(i)} style={{ borderLeftColor: colour }}>
             <div className={`stop-dot ${st?.pulse ? 'dot-pulse' : ''}`} style={{ background: colour }} />
             <div className="stop-info">
@@ -559,10 +872,15 @@ function StopList({ locations, activeStop, onSelect }) {
             <div className="stop-times">
               <span className="sched">{fmtISO(schedTime)}</span>
               {rtTime && <span className={`rt ${delay > 0 ? 'late' : delay < 0 ? 'early' : 'ontime'}`}>
-                {fmtISO(rtTime)}
+                {fmtISO(rtTime)}{isForecast && <span className="forecast-label">est</span>}
                 {delay !== null && delay !== 0 && <span className="delay-badge">{delay > 0 ? `+${delay}` : delay}</span>}
               </span>}
               {platform && <span className="platform">Pl {platform}</span>}
+              {isUpcoming && crs && onConnect && (
+                <button className={`btn-conn-stop ${isConnActive ? 'active' : ''}`}
+                  onClick={e => { e.stopPropagation(); onConnect(i, loc, arrISO); }}
+                  title="Show connecting trains">🔗</button>
+              )}
             </div>
           </div>
         );
@@ -604,6 +922,27 @@ function RefreshCountdown({ seconds, onRefresh, routeStatus }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e, info) { console.error('App error:', e, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding:'24px',color:'#fca5a5',background:'#0f1117',height:'100vh'}}>
+          <h2>Something went wrong</h2>
+          <p style={{color:'#64748b',fontSize:'0.85rem'}}>{this.state.error?.message}</p>
+          <button onClick={() => this.setState({error:null})}
+            style={{marginTop:'12px',padding:'8px 16px',background:'#3b82f6',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer'}}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [mode, setMode] = useState('board');
   const [serviceData, setServiceData] = useState(null);
@@ -618,6 +957,10 @@ export default function App() {
   const [boardState, setBoardState] = useState(null); // persisted board state
   const [trackRoute, setTrackRoute] = useState(null); // routed track geometry
   const [routeLoading, setRouteLoading] = useState(false);
+  const [connStop, setConnStop] = useState(null); // { idx, loc, arrISO }
+  const [mobileTab, setMobileTab] = useState('map'); // 'map' | 'list'
+  const [connDestCode, setConnDestCode] = useState(null);
+  const [connDestName, setConnDestName] = useState(null);
   const timerRef = useRef(null);
   const mapRef = useRef(null);
 
@@ -648,6 +991,7 @@ export default function App() {
     const d = date || new Date().toISOString().slice(0,10);
     setCurrentSearch({ uid, date: d });
     setActiveStop(null);
+    setMobileTab('map');
     fetchService({ uid, date: d });
   }, [fetchService]);
 
@@ -663,16 +1007,24 @@ export default function App() {
   }, [currentSearch, mode, fetchService]);
 
   const handleBack = () => {
-    setMode('board'); setServiceData(null); setError(null); setTrackRoute(null);
+    setMode('board'); setServiceData(null); setError(null); setTrackRoute(null); setConnStop(null);
     clearInterval(timerRef.current);
+  };
+
+  const handleConnect = (idx, loc, arrISO) => {
+    if (connStop?.idx === idx) { setConnStop(null); return; } // toggle off
+    setConnStop({ idx, loc, arrISO });
   };
 
   const switchTile = (key) => { setTileKey(key); lsSet('tt_tile', key); };
 
   const locations = serviceData?.service?.locations || [];
-  const mappedStops = locations.filter(l => l.lat && l.lon);
+  // All locations with coords (for position estimation, including junctions)
+  const allMappedLocs = locations.filter(l => l.lat && l.lon);
+  // Only public calls shown as map markers
+  const mappedStops = locations.filter(l => l.lat && l.lon && !isPass(l));
   const positions = mappedStops.map(l => [l.lat, l.lon]);
-  const trainPos = serviceData ? estimatePosition(locations) : null;
+  const trainPos = serviceData ? safePosition(estimatePosition(locations)) : null;
   const missingCoords = locations.filter(l => !isPass(l) && !l.lat).length;
   const activeStatusColour = (() => {
     const a = locations.find(l => locationStatus(l)?.pulse);
@@ -693,6 +1045,7 @@ export default function App() {
   ];
 
   return (
+    <ErrorBoundary>
     <div className="app">
       <header className="header">
         <div className="logo">🚆 Train Tracker</div>
@@ -738,7 +1091,15 @@ export default function App() {
       )}
 
       <div className="main">
-        <div className="sidebar">
+        {/* Mobile tab bar — only shown in map mode */}
+        {mode === 'map' && serviceData && (
+          <div className="mobile-tabs">
+            <button className={`mobile-tab ${mobileTab === 'map' ? 'active' : ''}`} onClick={() => setMobileTab('map')}>🗺 Map</button>
+            <button className={`mobile-tab ${mobileTab === 'list' ? 'active' : ''}`} onClick={() => setMobileTab('list')}>📋 Stops</button>
+          </div>
+        )}
+
+        <div className={`sidebar ${mode === 'map' && mobileTab === 'map' ? 'mobile-hidden' : ''}`}>
           {mode === 'board' && <DepartureBoard onSelectService={loadService} savedState={boardState} onSaveState={setBoardState} />}
           {mode === 'favs' && <FavouritesList onLoad={loadService} />}
           {mode === 'headcode' && <HeadcodeSearch onSelectService={loadService} />}
@@ -746,10 +1107,26 @@ export default function App() {
             <div className="empty-state"><div className="empty-icon">🚆</div><p>Enter a service UID to track a train</p><p className="hint">Find UIDs on realtimetrains.co.uk</p></div>
           )}
           {loading && mode !== 'map' && <div className="loading-state">Loading…</div>}
-          {mode === 'map' && serviceData && <StopList locations={locations} activeStop={activeStop} onSelect={handleSelectStop} />}
+          {mode === 'map' && serviceData && (
+            <>
+              <StopList locations={locations} activeStop={activeStop} onSelect={handleSelectStop}
+                onConnect={handleConnect} activeConn={connStop?.idx} />
+              {connStop && (
+                <ConnectionsPanel
+                  stop={connStop.loc}
+                  arrivalISO={connStop.arrISO}
+                  destCode={connDestCode || boardState?.destCode}
+                  destName={connDestName || boardState?.dest}
+                  onSelectService={loadService}
+                  onClose={() => setConnStop(null)}
+                  leg={1}
+                />
+              )}
+            </>
+          )}
         </div>
 
-        <div className="map-wrap">
+        <div className={`map-wrap ${mode === 'map' && mobileTab === 'list' ? 'mobile-hidden' : ''}`}>
           <MapContainer center={[52.5, -1.5]} zoom={7} style={{ height: '100%', width: '100%' }} ref={mapRef}>
             <TileLayerSwitcher tileKey={tileKey} />
             {positions.length > 1 && (
@@ -762,7 +1139,7 @@ export default function App() {
                 }
               </>
             )}
-            {mappedStops.map((loc, i) => {
+            {mappedStops.filter(l => !isNaN(l.lat) && !isNaN(l.lon)).map((loc, i) => {
               const colour = stopColour(loc);
               const isActive = activeStop === locations.indexOf(loc);
               const st = locationStatus(loc);
@@ -792,7 +1169,7 @@ export default function App() {
                 </CircleMarker>
               );
             })}
-            {trainPos && (
+            {trainPos && !isNaN(trainPos.lat) && !isNaN(trainPos.lon) && (
               <Marker position={[trainPos.lat, trainPos.lon]} icon={trainIcon(activeStatusColour)}>
                 <Popup>{trainPos.label}</Popup>
               </Marker>
@@ -813,5 +1190,6 @@ export default function App() {
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

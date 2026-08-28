@@ -14,7 +14,7 @@ export default defineConfig({
     outDir: 'dist',
   },
   define: {
-    // Allow VITE_API_URL env var; default to empty string (nginx proxies /api)
     __API_URL__: JSON.stringify(process.env.VITE_API_URL || ''),
+    __STADIA_API_KEY__: JSON.stringify(process.env.VITE_STADIA_API_KEY || ''),
   }
 })

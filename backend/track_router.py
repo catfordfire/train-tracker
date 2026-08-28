@@ -420,7 +420,7 @@ def route_between_sync(from_crs, from_lat, from_lon, to_crs, to_lat, to_lon,
             haversine(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1])
             for i in range(len(coords)-1)
         )
-        if routed_km > straight_km * 3.5:
+        if routed_km > straight_km * 2.5:
             print(f"Route {from_crs}→{to_crs} rejected: {routed_km:.1f}km vs {straight_km:.1f}km straight")
             return straight
 
@@ -450,8 +450,14 @@ async def route_between(from_crs, from_lat, from_lon, to_crs, to_lat, to_lon,
 
 
 async def route_full_service(locations: list) -> list:
+    # Only route between public calling stops (CALL), not junctions/passes
+    # Pass locations are used for position estimation but not for the route polyline
+    def is_call(loc):
+        display_as = loc.get("temporalData", {}).get("displayAs", "")
+        return display_as in ("CALL", "CANCELLED_CALL", "") and not display_as.startswith("PASS")
+
     mapped = [(i, loc) for i, loc in enumerate(locations)
-              if loc.get("lat") and loc.get("lon")]
+              if loc.get("lat") and loc.get("lon") and is_call(loc)]
     if len(mapped) < 2:
         return [[loc["lat"], loc["lon"]] for _, loc in mapped]
 

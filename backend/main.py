@@ -295,12 +295,11 @@ async def get_service_route(
 
 
 def enrich_with_coords(service_data: dict) -> dict:
-    """Add lat/lon to each location using local stations DB."""
+    """Add lat/lon to each location using local stations DB and track tiplocs."""
     locations = service_data.get("service", {}).get("locations", [])
     if not locations:
         return service_data
 
-    # NG API: location.shortCodes = [CRS], location.longCodes = [TIPLOCs]
     crs_codes = list({
         loc["location"]["shortCodes"][0]
         for loc in locations
@@ -321,9 +320,19 @@ def enrich_with_coords(service_data: dict) -> dict:
             coord_map[row["crs"]] = {"lat": row["lat"], "lon": row["lon"]}
 
     if tiplocs:
+        # Check stations DB first
         ph = ",".join("?" * len(tiplocs))
         for row in conn.execute(f"SELECT tiploc, lat, lon FROM stations WHERE tiploc IN ({ph})", tiplocs):
             coord_map[f"T:{row['tiploc']}"] = {"lat": row["lat"], "lon": row["lon"]}
+
+        # Also check track_tiplocs table (has junction/signal box coords from rail_network.json)
+        try:
+            for row in conn.execute(f"SELECT tiploc, lat, lon FROM track_tiplocs WHERE tiploc IN ({ph})", tiplocs):
+                key = f"T:{row['tiploc']}"
+                if key not in coord_map and row["lat"]:  # don't overwrite station coords
+                    coord_map[key] = {"lat": row["lat"], "lon": row["lon"]}
+        except Exception:
+            pass  # track_tiplocs may not exist yet
 
     conn.close()
 

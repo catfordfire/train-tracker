@@ -765,3 +765,260 @@
 .route-status.loading { color: #f59e0b; animation: pulse 1.2s infinite; }
 .route-status.routed  { color: #22c55e; }
 .route-status.straight { color: #475569; }
+
+/* ── Connection button on stop rows ── */
+.btn-conn-stop {
+  background: none;
+  border: 1px solid #2d3148;
+  color: #475569;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.btn-conn-stop:hover { background: #1e2840; color: #60a5fa; border-color: #3b82f6; }
+.btn-conn-stop.active { background: #1e2840; color: #60a5fa; border-color: #3b82f6; }
+.stop-row.conn-active { background: #141824; }
+
+/* ── Connections panel ── */
+.connections-panel {
+  border-top: 2px solid #3b82f6;
+  background: #0f1117;
+  flex-shrink: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.connections-panel::-webkit-scrollbar { width: 4px; }
+.connections-panel::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 2px; }
+
+.conn-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 8px 12px;
+  background: #13161f;
+  border-bottom: 1px solid #2d3148;
+  flex-shrink: 0;
+}
+.conn-title { display: flex; flex-direction: column; gap: 2px; }
+.conn-leg {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #3b82f6;
+  font-weight: 700;
+}
+.conn-station { font-size: 0.83rem; font-weight: 600; color: #e2e8f0; }
+.conn-dest { font-size: 0.72rem; color: #60a5fa; }
+
+.conn-loading, .conn-error, .conn-empty {
+  padding: 12px;
+  font-size: 0.8rem;
+  color: #475569;
+  text-align: center;
+}
+.conn-error { color: #fca5a5; }
+
+.conn-service {
+  border-bottom: 1px solid #1a1d27;
+}
+.conn-service.cancelled { opacity: 0.6; }
+.conn-service-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.conn-service-main:hover { background: #1a1d27; }
+
+/* ── Connection detail (calling points) ── */
+.conn-detail {
+  background: #0a0c12;
+  padding: 6px 12px 10px;
+  border-top: 1px solid #1a1d27;
+}
+.conn-detail-stops { margin-bottom: 8px; }
+
+.cp-destination { background: rgba(59,130,246,0.08); border-radius: 4px; }
+.conn-dest-badge {
+  margin-left: 6px;
+  font-size: 0.62rem;
+  background: rgba(59,130,246,0.2);
+  color: #60a5fa;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.btn-connect {
+  background: none;
+  border: 1px solid #2d3148;
+  color: #475569;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-connect:hover { background: #1e2840; color: #60a5fa; border-color: #3b82f6; }
+
+/* ── Connection delay badges ── */
+.conn-delay-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.conn-delay-badge.late    { background: rgba(239,68,68,0.15);  color: #f87171; }
+.conn-delay-badge.early   { background: rgba(52,211,153,0.15); color: #34d399; }
+.conn-delay-badge.ontime  { background: rgba(34,197,94,0.15);  color: #22c55e; }
+
+.conn-delay-badge.sched { background: rgba(148,163,184,0.15); color: #64748b; }
+
+/* ── Forecast label ── */
+.forecast-label {
+  font-size: 0.6rem;
+  color: #64748b;
+  font-style: italic;
+  margin-left: 2px;
+  vertical-align: super;
+}
+
+/* ── Mobile layout ── */
+@media (max-width: 768px) {
+
+  /* Header stacks vertically */
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .header-tabs {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .tab {
+    flex: 1;
+    text-align: center;
+    padding: 7px 4px;
+    font-size: 0.75rem;
+  }
+
+  .search-bar {
+    width: 100%;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .search-bar .search-group { width: 100%; }
+  .search-bar .input { width: 100%; box-sizing: border-box; }
+  .search-bar .btn-primary { width: 100%; }
+
+  .tile-switcher { flex-wrap: wrap; }
+
+  /* Service header scrolls horizontally */
+  .service-header {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+  }
+
+  /* Main area: full height column */
+  .main {
+    flex-direction: column;
+  }
+
+  /* Sidebar: full width when visible */
+  .sidebar {
+    width: 100%;
+    max-height: 100%;
+    border-right: none;
+    border-bottom: 1px solid #2d3148;
+  }
+
+  /* Map: full screen */
+  .map-wrap {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Hide/show via mobile tab */
+  .mobile-hidden {
+    display: none !important;
+  }
+
+  /* Journey progress bar compact */
+  .jp-labels { font-size: 0.65rem; }
+  .jp-active { display: none; } /* too long on mobile */
+
+  /* Rolling stock compact */
+  .rolling-stock { font-size: 0.72rem; gap: 6px; }
+  .rs-units { display: none; }
+
+  /* Connections panel full height */
+  .connections-panel { max-height: 70vh; }
+
+  /* Station search form stacks */
+  .station-form { gap: 6px; }
+  .board-actions { flex-wrap: wrap; }
+
+  /* Stop rows slightly more compact */
+  .stop-row { padding: 6px 10px; }
+  .stop-name { font-size: 0.8rem; }
+
+  /* Legend smaller */
+  .legend {
+    font-size: 0.68rem;
+    padding: 6px 8px;
+    gap: 4px;
+  }
+
+  /* Refresh bar compact */
+  .refresh-bar { font-size: 0.7rem; padding: 3px 10px; }
+}
+
+/* ── Mobile tab bar ── */
+.mobile-tabs {
+  display: none; /* hidden on desktop */
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .mobile-tabs {
+    display: flex;
+    background: #1a1d27;
+    border-bottom: 1px solid #2d3148;
+  }
+}
+
+.mobile-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #64748b;
+  padding: 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.mobile-tab:hover { color: #e2e8f0; }
+.mobile-tab.active {
+  color: #60a5fa;
+  border-bottom-color: #3b82f6;
+  background: #13161f;
+}
